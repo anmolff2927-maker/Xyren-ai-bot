@@ -148,8 +148,8 @@ def ask_gemini(chat_id, message):
             )
 
             return (
-                "Sorry bhai! AI service mein problem aa gayi. "
-                "Thodi der baad try karo."
+                "Sorry bro! AI server issue acquired. "
+                Sorry but xyren ai isn't able to reply due to ai service issue."
             )
 
         data = response.json()

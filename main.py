@@ -1,4 +1,3 @@
-
 import os
 import requests
 import logging
@@ -15,9 +14,10 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
 
+# Yahan model name theek kar diya hai
 GEMINI_MODEL = os.environ.get(
     "GEMINI_MODEL",
-    "gemini-3.8-flash"
+    "gemini-2.5-flash"
 )
 
 GEMINI_URL = (
@@ -94,7 +94,7 @@ def ask_gemini(user_id, user_text):
                 response.status_code,
                 response.text
             )
-            return "Sorry bhai! AI service mein problem aa gayi. Thodi der baad try karo."
+            return f"Gemini API Error {response.status_code}: {response.text}"
 
         data = response.json()
 
@@ -127,9 +127,9 @@ def ask_gemini(user_id, user_text):
         logger.exception("Gemini request timed out")
         return "Bhai, AI response dene mein time le raha hai. Dobara try karo."
 
-    except Exception:
+    except Exception as e:
         logger.exception("Gemini request failed")
-        return "Sorry bhai! AI service mein problem aa gayi. Thodi der baad try karo."
+        return f"Error details: {str(e)}"
 
 
 @app.route("/", methods=["GET"])
@@ -237,5 +237,5 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
-    )
+)
     

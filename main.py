@@ -14,10 +14,10 @@ TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
 GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
 WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
 
-# Yahan model name theek kar diya hai
+# Yahan official gemini-3.8-flash daal diya hai
 GEMINI_MODEL = os.environ.get(
     "GEMINI_MODEL",
-    "gemini-2.5-flash"
+    "gemini-3.8-flash"
 )
 
 GEMINI_URL = (
@@ -237,5 +237,5 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
-)
+    )
     

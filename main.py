@@ -1,168 +1,110 @@
 
 import os
-import logging
 import requests
+import logging
 from flask import Flask, request, jsonify
-
-# ---------------- CONFIGURATION ----------------
 
 app = Flask(__name__)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s: %(message)s"
+# LOGGING
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# API SETTINGS
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+GEMINI_KEY = os.environ.get("GEMINI_API_KEY")
+WEBHOOK_SECRET = os.environ.get("WEBHOOK_SECRET")
+
+GEMINI_MODEL = os.environ.get(
+    "GEMINI_MODEL",
+    "gemini-3.8-flash"
 )
 
-log = logging.getLogger("xyren-ai")
-
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-GEMINI_KEY = os.getenv("GEMINI_API_KEY")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "").strip()
-
-MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
-
-if not TELEGRAM_TOKEN:
-    log.error("TELEGRAM_BOT_TOKEN is missing!")
-
-if not GEMINI_KEY:
-    log.error("GEMINI_API_KEY is missing!")
-
-TELEGRAM_API = (
-    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
-    if TELEGRAM_TOKEN else ""
+GEMINI_URL = (
+    f"https://generativelanguage.googleapis.com/"
+    f"v1beta/models/{GEMINI_MODEL}:generateContent"
 )
 
-# ---------------- CHAT MEMORY ----------------
+TELEGRAM_URL = (
+    f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+)
 
-chat_history = {}
-MAX_HISTORY = 12
+# USER MEMORY
+user_memory = {}
 
-# ---------------- TELEGRAM FUNCTIONS ----------------
+# BOT SETTINGS
+MAX_HISTORY = 10
+
 
 def send_message(chat_id, text):
-    if not TELEGRAM_API:
-        log.error("Telegram token missing")
-        return False
-
-    url = f"{TELEGRAM_API}/sendMessage"
-
-    chunks = [
-        text[i:i + 4000]
-        for i in range(0, len(text), 4000)
-    ] or [""]
-
-    success = True
-
-    for chunk in chunks:
-        try:
-            response = requests.post(
-                url,
-                json={
-                    "chat_id": chat_id,
-                    "text": chunk
-                },
-                timeout=20
-            )
-
-            if not response.ok:
-                log.error("Telegram send error: %s", response.text)
-                success = False
-
-        except requests.RequestException as error:
-            log.error("Telegram connection error: %s", error)
-            success = False
-
-    return success
-
-
-def send_typing(chat_id):
     try:
-        requests.post(
-            f"{TELEGRAM_API}/sendChatAction",
+        response = requests.post(
+            TELEGRAM_URL,
             json={
                 "chat_id": chat_id,
-                "action": "typing"
+                "text": text
             },
-            timeout=10
+            timeout=20
         )
-    except requests.RequestException as error:
-        log.warning("Typing error: %s", error)
+
+        if not response.ok:
+            logger.error(
+                "Telegram error: %s",
+                response.text
+            )
+
+        return response.ok
+
+    except Exception:
+        logger.exception("Telegram send error")
+        return False
 
 
-# ---------------- GEMINI AI ----------------
-
-def ask_gemini(chat_id, message):
+def ask_gemini(user_id, user_text):
 
     if not GEMINI_KEY:
-        return "Gemini API key missing. Please contact the bot owner."
+        logger.error("GEMINI_API_KEY missing")
+        return "Bhai, Gemini API key set nahi hai."
 
-    history = chat_history.get(chat_id, [])
+    history = user_memory.get(user_id, [])
 
-    contents = history + [{
+    history.append({
         "role": "user",
-        "parts": [{"text": message}]
-    }]
-
-    url = (
-        "https://generativelanguage.googleapis.com/"
-        f"v1beta/models/{MODEL}:generateContent"
-    )
+        "parts": [{"text": user_text}]
+    })
 
     payload = {
-        "systemInstruction": {
-            "parts": [{
-                "text": (
-                    "Your name is Xyren AI. "
-                    "You are a friendly, intelligent AI assistant. "
-                    "Reply in the language used by the user. "
-                    "Support Hindi, Hinglish and English. "
-                    "Give accurate, useful and clear answers. "
-                    "Be natural and conversational. "
-                    "Do not claim to be ChatGPT."
-                )
-            }]
-        },
-        "contents": contents,
+        "contents": history,
         "generationConfig": {
-            "temperature": 0.7,
             "maxOutputTokens": 1500
         }
     }
 
     try:
         response = requests.post(
-            url,
-            headers={
-                "Content-Type": "application/json",
-                "x-goog-api-key": GEMINI_KEY
-            },
+            GEMINI_URL,
+            params={"key": GEMINI_KEY},
             json=payload,
-            timeout=50
+            timeout=60
         )
 
         if not response.ok:
-            log.error(
-                "GEMINI API ERROR %s: %s",
+            logger.error(
+                "Gemini API error %s: %s",
                 response.status_code,
-                response.text[:1500]
+                response.text
             )
-
-            return (
-                "Sorry bro! AI server issue acquired. "
-                Sorry but xyren ai isn't able to reply due to ai service issue."
-            )
+            return "Sorry bhai! AI service mein problem aa gayi. Thodi der baad try karo."
 
         data = response.json()
 
         candidates = data.get("candidates", [])
 
         if not candidates:
-            log.error("Gemini returned no candidates: %s", data)
-            return "Sorry! AI abhi answer generate nahi kar paya."
+            logger.error("Gemini returned no candidates: %s", data)
+            return "Bhai, AI se response nahi mila. Dobara try karo."
 
-        parts = candidates[0].get(
-            "content", {}
-        ).get("parts", [])
+        parts = candidates[0].get("content", {}).get("parts", [])
 
         answer = "".join(
             part.get("text", "")
@@ -170,149 +112,124 @@ def ask_gemini(chat_id, message):
         ).strip()
 
         if not answer:
-            log.error("Gemini returned empty response")
-            return "Sorry! Mujhe answer nahi mila. Dobara try karo."
+            return "Bhai, AI ka response empty aaya."
 
-        # Save chat history only after successful response
-        history.extend([
-            {
-                "role": "user",
-                "parts": [{"text": message}]
-            },
-            {
-                "role": "model",
-                "parts": [{"text": answer}]
-            }
-        ])
+        history.append({
+            "role": "model",
+            "parts": [{"text": answer}]
+        })
 
-        chat_history[chat_id] = history[-MAX_HISTORY:]
+        user_memory[user_id] = history[-MAX_HISTORY:]
 
         return answer
 
-    except requests.Timeout:
-        log.error("Gemini request timed out")
-        return "AI ko reply dene mein time lag raha hai. Dobara try karo."
+    except requests.exceptions.Timeout:
+        logger.exception("Gemini request timed out")
+        return "Bhai, AI response dene mein time le raha hai. Dobara try karo."
 
-    except requests.RequestException as error:
-        log.exception("Gemini connection failed: %s", error)
-        return "AI server connection problem. Please try again."
+    except Exception:
+        logger.exception("Gemini request failed")
+        return "Sorry bhai! AI service mein problem aa gayi. Thodi der baad try karo."
 
-    except Exception as error:
-        log.exception("Gemini unexpected error: %s", error)
-        return "Sorry! Kuch technical problem aa gayi."
-
-
-# ---------------- HOME PAGE ----------------
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Xyren AI is Online! 🤖"
+    return "XYREN AI is running!"
 
 
-# ---------------- TELEGRAM WEBHOOK ----------------
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({
+        "status": "online",
+        "bot": "XYREN AI"
+    })
+
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
-    # Verify secret only when configured in Render.
-    # Remove WEBHOOK_SECRET from Render to disable
-    # verification while troubleshooting.
-    if WEBHOOK_SECRET:
-        import hmac
+    if not TELEGRAM_TOKEN:
+        logger.error("TELEGRAM_BOT_TOKEN missing")
+        return jsonify({"error": "Bot token missing"}), 500
 
-        received_secret = request.headers.get(
-            "X-Telegram-Bot-Api-Secret-Token", ""
+    if WEBHOOK_SECRET:
+        secret = request.headers.get(
+            "X-Telegram-Bot-Api-Secret-Token"
         )
 
-        if not hmac.compare_digest(
-            received_secret, WEBHOOK_SECRET
-        ):
-            log.error("Webhook secret verification failed")
-            return "Unauthorized", 403
+        if secret != WEBHOOK_SECRET:
+            return jsonify({"error": "Unauthorized"}), 403
 
     try:
         update = request.get_json(silent=True) or {}
 
         message = update.get("message", {})
 
-        if not message or "text" not in message:
-            return "OK", 200
+        if not message:
+            return jsonify({"ok": True})
 
-        chat_id = message["chat"]["id"]
-        text = message["text"].strip()
-
-        log.info(
-            "Telegram message received: %s",
-            text[:100]
+        chat_id = message.get("chat", {}).get("id")
+        user_id = str(
+            message.get("from", {}).get("id", chat_id)
         )
+
+        text = message.get("text", "").strip()
+
+        if not chat_id or not text:
+            return jsonify({"ok": True})
 
         # START COMMAND
         if text == "/start":
             send_message(
                 chat_id,
-                "👋 Welcome to XYREN AI!\n\n"
-                "🤖 Your personal AI assistant.\n"
-                "💬 Hindi + English support.\n\n"
-                "Mujhse kuch bhi pucho!\n\n"
+                "Namaste bhai! ❤️\n\n"
+                "Main XYREN AI hoon, tumhara personal AI assistant.\n\n"
+                "Mujhse kuch bhi pooch sakte ho!\n\n"
+                "Commands:\n"
+                "/start - Start bot\n"
                 "/help - Help\n"
-                "/reset - Clear chat memory"
+                "/reset - Reset memory"
             )
-            return "OK", 200
+            return jsonify({"ok": True})
 
         # HELP COMMAND
         if text == "/help":
             send_message(
                 chat_id,
-                "🤖 XYREN AI HELP\n\n"
-                "Simply send me any question.\n"
-                "I support Hindi, Hinglish and English.\n\n"
-                "/reset - Clear chat history"
+                "XYREN AI Help 🤖\n\n"
+                "Bas mujhe message bhejo aur main jawab dunga.\n\n"
+                "/start - Start\n"
+                "/help - Help\n"
+                "/reset - Clear chat memory"
             )
-            return "OK", 200
+            return jsonify({"ok": True})
 
         # RESET COMMAND
         if text == "/reset":
-            chat_history.pop(chat_id, None)
-            send_message(chat_id, "✅ Chat memory cleared!")
-            return "OK", 200
+            user_memory.pop(user_id, None)
 
-        if not text:
-            return "OK", 200
+            send_message(
+                chat_id,
+                "Bhai, tumhari chat memory reset ho gayi! ❤️"
+            )
+            return jsonify({"ok": True})
 
-        # AI CHAT
-        send_typing(chat_id)
+        # IGNORE OTHER COMMANDS
+        if text.startswith("/"):
+            send_message(chat_id, "Unknown command. /help likho.")
+            return jsonify({"ok": True})
 
-        answer = ask_gemini(chat_id, text)
+        # GEMINI AI RESPONSE
+        answer = ask_gemini(user_id, text)
 
         send_message(chat_id, answer)
 
-    except Exception as error:
-        log.exception("BOT ERROR: %s", error)
+        return jsonify({"ok": True})
 
-        try:
-            if "chat_id" in locals():
-                send_message(
-                    chat_id,
-                    "⚠️ Something went wrong. Please try again."
-                )
-        except Exception:
-            log.exception("Error sending failure message")
+    except Exception:
+        logger.exception("Webhook error")
+        return jsonify({"ok": True})
 
-    return "OK", 200
-
-
-# ---------------- HEALTH CHECK ----------------
-
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({
-        "status": "online",
-        "bot": "Xyren AI",
-        "model": MODEL
-    })
-
-
-# ---------------- START SERVER ----------------
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
@@ -320,5 +237,5 @@ if __name__ == "__main__":
     app.run(
         host="0.0.0.0",
         port=port
-        )
-            
+    )
+    
